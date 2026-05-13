@@ -1,26 +1,6 @@
 #!/usr/bin/env python3
 """
 Plot LOS displacement time series for one or two point IDs from CSV file(s).
-
-Example usage
--------------
-Single point:
-    plot_displacement.py \
-        --p1 349562 \
-        --f1 file1.csv \
-        --output point1displacement.png
-
-Two points:
-    plot_displacement.py \
-        --p1 349562 --f1 file1.csv \
-        --p2 456356 --f2 file2.csv \
-        --output point1point2displacement.png
-
-Optional title:
-    python3 plot_displacement.py \
-        --p1 349562 --f1 file1.csv \
-        --title "Building 1" \
-        --output building1.png
 """
 
 from __future__ import annotations
@@ -34,9 +14,39 @@ import pandas as pd
 
 
 def parse_args() -> argparse.Namespace:
+    examples = """
+    Examples
+    --------
+    Single point:
+        plot_displacement.py --p1 21731 --f1 TSX_036_20170923_20251008_N2596W08013_N2592W08013_N2592W08011_N2596W08011.csv --output point21731.png
+
+    Single point with grid:
+        plot_displacement.py --p1 21731 --f1 TSX_036_20170923_20251008_N2596W08013_N2592W08013_N2592W08011_N2596W08011.csv --grid --output point21731_grid.png
+
+    Single point with velocity and total displacement in legend:
+        plot_displacement.py --p1 21731 --f1 TSX_036_20170923_20251008_N2596W08013_N2592W08013_N2592W08011_N2596W08011.csv --total-disp --output point21731_total_disp.png
+
+    Two points:
+        plot_displacement.py --p1 21731 --f1 TSX_036_20170923_20251008_N2596W08013_N2592W08013_N2592W08011_N2596W08011.csv --p2 10542 --f2 TSX_036_20220901_20251008_N2596W08013_N2592W08013_N2592W08012_N2596W08012.csv --total-disp --output two_points.png
+
+    Velocity only:
+        plot_displacement.py --p1 21731 --f1 TSX_036_20170923_20251008_N2596W08013_N2592W08013_N2592W08011_N2596W08011.csv --output point21731.png.png
+    
+    Velocity and total displacement:
+        plot_displacement.py --p1 21731 --f1 TSX_036_20170923_20251008_N2596W08013_N2592W08013_N2592W08011_N2596W08011.csv --total-disp --output point21731_total_disp.png
+    
+    Grid - velocity - total displacement:
+        plot_displacement.py --p1 21731 --f1 TSX_036_20170923_20251008_N2596W08013_N2592W08013_N2592W08011_N2596W08011.csv --grid --total-disp --output point21731_grid_total_disp.png
+    
+    Optional title:
+        plot_displacement.py --p1 21731 --f1 TSX_036_20170923_20251008_N2596W08013_N2592W08013_N2592W08011_N2596W08011.csv --title "Acqualina North LOS Displacement" --output acqualina_north.png
+    """
+
     parser = argparse.ArgumentParser(
-        description="Plot LOS displacement time series for one or two point IDs from CSV file(s)."
-    )
+        description="Plot LOS displacement time series for one or two point IDs from CSV file(s).",
+        epilog=examples,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
 
     parser.add_argument("--p1", type=int, required=True, help="Point ID for first point")
     parser.add_argument("--f1", type=str, required=True, help="CSV file for first point")
@@ -56,7 +66,17 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Output PNG file",
     )
+    parser.add_argument(
+        "--grid",
+        action="store_true",
+        help="Show grid lines on the plot. Default is no grid.",
+    )
 
+    parser.add_argument(
+        "--total-disp",
+        action="store_true",
+        help="Show total displacement in the legend (computed as last minus first displacement).",
+    )
     # Optional manual override if direction cannot be inferred from filename
     parser.add_argument(
         "--dir1",
@@ -148,6 +168,27 @@ def load_point_timeseries(csv_file: str, point_id: int) -> tuple[pd.DataFrame, f
     return ts, velocity
 
 
+def compute_total_displacement(ts: pd.DataFrame) -> float | None:
+    """
+    Compute total displacement as the last valid displacement minus the first valid displacement.
+
+    Returns
+    -------
+    float | None
+        Total displacement in centimeters.
+    """
+    if ts.empty or "displacement_cm" not in ts.columns:
+        return None
+
+    first = ts["displacement_cm"].iloc[0]
+    last = ts["displacement_cm"].iloc[-1]
+
+    if pd.isna(first) or pd.isna(last):
+        return None
+
+    return float(last - first)
+
+
 def build_label(
     point_name: str,
     velocity: float | None,
@@ -182,19 +223,28 @@ def main() -> None:
     if args.p2 is None:
         fig, ax = plt.subplots(figsize=(14, 7))
 
+        total_disp1 = compute_total_displacement(ts1) if args.total_disp else None
+
         label1_parts = []
         if dir1 is not None:
             label1_parts.append(dir1)
         if v1 is not None:
             label1_parts.append(f"v={v1:.2f} mm/yr")
+        if total_disp1 is not None:
+            label1_parts.append(f"Δ={total_disp1:.2f} cm")
+
         label1 = f"P1 ({', '.join(label1_parts)})" if label1_parts else "P1"
+
 
         ax.scatter(ts1["date"], ts1["displacement_cm"], s=45, label=label1)
 
         ax.set_title(args.title, fontsize=24)
         ax.set_xlabel("Date", fontsize=16)
         ax.set_ylabel("LOS Displacement (cm)", fontsize=16)
-        ax.grid(True, alpha=0.35)
+        if args.grid:
+            ax.grid(True, alpha=0.35)
+        else:
+            ax.grid(False)
         ax.legend(fontsize=11)
 
         # clean y ticks
@@ -225,11 +275,16 @@ def main() -> None:
 
         fig.suptitle(args.title, fontsize=24)
 
+        total_disp1 = compute_total_displacement(ts1) if args.total_disp else None
+        total_disp2 = compute_total_displacement(ts2) if args.total_disp else None
+
         label1_parts = []
         if dir1 is not None:
             label1_parts.append(dir1)
         if v1 is not None:
             label1_parts.append(f"v={v1:.2f} mm/yr")
+        if total_disp1 is not None:
+            label1_parts.append(f"Δ={total_disp1:.2f} cm")
         label1 = f"P1 ({', '.join(label1_parts)})" if label1_parts else "P1"
 
         label2_parts = []
@@ -237,19 +292,27 @@ def main() -> None:
             label2_parts.append(dir2)
         if v2 is not None:
             label2_parts.append(f"v={v2:.2f} mm/yr")
+        if total_disp2 is not None:
+            label2_parts.append(f"Δ={total_disp2:.2f} cm")
         label2 = f"P2 ({', '.join(label2_parts)})" if label2_parts else "P2"
 
         # Top panel
         ax1.scatter(ts1["date"], ts1["displacement_cm"], s=45, label=label1)
         ax1.set_ylabel("LOS Displacement (cm)", fontsize=15)
-        ax1.grid(True, alpha=0.35)
+        if args.grid:
+            ax1.grid(True, alpha=0.35)
+        else:
+            ax1.grid(False)
         ax1.legend(fontsize=11, loc="upper right")
 
         # Bottom panel
         ax2.scatter(ts2["date"], ts2["displacement_cm"], s=45, label=label2, color="tab:orange")
         ax2.set_ylabel("LOS Displacement (cm)", fontsize=15)
         ax2.set_xlabel("Date", fontsize=16)
-        ax2.grid(True, alpha=0.35)
+        if args.grid:
+            ax2.grid(True, alpha=0.35)
+        else:
+            ax2.grid(False)
         ax2.legend(fontsize=11, loc="upper right")
 
         # Clean y ticks separately for each subplot
@@ -277,3 +340,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
